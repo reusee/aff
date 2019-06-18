@@ -124,16 +124,7 @@ func buildUI() {
 
 	d1 := "build"
 	cmd := exec.Command("tsc",
-		"--module", "es6",
-		"--target", "es6",
-		"--alwaysStrict",
-		"--downlevelIteration",
-		//"--sourceMap",
-		"--inlineSourceMap",
-		"--removeComments",
-		"--noEmitOnError",
-		"--outDir", d1,
-		"main.ts",
+		"--build", "tsconfig.json",
 	)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		pt("build error: %v\n", err)

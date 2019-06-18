@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "incremental": true,
+    "module": "es6",
+    "target": "es6",
+    "downlevelIteration": true,
+    "inlineSourceMap": true,
+    "removeComments": true,
+    "noEmitOnError": true,
+    "outDir": "build",
+    "alwaysStrict": true
+  }
+}
+
