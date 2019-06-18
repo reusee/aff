@@ -1,0 +1,242 @@
+package main
+
+import (
+	"bytes"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"os/exec"
+	"path"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/reusee/ash"
+	"github.com/rjeczalik/notify"
+)
+
+var (
+	pt = fmt.Printf
+)
+
+func init() {
+	go func() {
+		c := make(chan notify.EventInfo, 32)
+		for _, watchDir := range []string{
+			".", "./aff",
+		} {
+			if err := notify.Watch(watchDir, c, notify.Create, notify.Write); err != nil {
+				panic(err)
+			}
+			defer notify.Stop(c)
+			pt("watching %s\n", watchDir)
+		}
+
+	build:
+		buildUI()
+
+	wait:
+		ev := <-c
+		path := ev.Path()
+		if !strings.HasSuffix(path, ".ts") {
+			goto wait
+		}
+		after := time.NewTimer(time.Millisecond * 50)
+	batch:
+		for {
+			select {
+			case ev := <-c:
+				_ = ev
+				if !after.Stop() {
+					<-after.C
+				}
+				after.Reset(time.Millisecond * 50)
+			case <-after.C:
+				break batch
+			}
+		}
+		goto build
+	}()
+}
+
+func copyDir(src, dest string) error {
+	stat, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	if stat.IsDir() {
+		stat, err = os.Stat(dest)
+		if os.IsNotExist(err) {
+			if err := os.Mkdir(dest, 0655); err != nil {
+				return err
+			}
+		} else if !stat.IsDir() {
+			return fmt.Errorf("%s is not dir", dest)
+		}
+		f, err := os.Open(src)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		names, err := f.Readdirnames(-1)
+		if err != nil {
+			return err
+		}
+		for _, name := range names {
+			if err := copyDir(
+				filepath.Join(src, name),
+				filepath.Join(dest, name),
+			); err != nil {
+				return err
+			}
+		}
+	} else {
+		in, err := os.Open(src)
+		if err != nil {
+			return err
+		}
+		defer in.Close()
+		out, err := os.Create(dest)
+		if err != nil {
+			return err
+		}
+		defer out.Close()
+		if _, err := io.Copy(out, in); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func buildUI() {
+	t0 := time.Now()
+	pt("%v rebuilding...", time.Now().Format("15:04:05.000000"))
+	os.Stdout.Sync()
+
+	d1 := "build"
+	cmd := exec.Command("tsc",
+		"--module", "es6",
+		"--target", "es6",
+		"--alwaysStrict",
+		"--downlevelIteration",
+		//"--sourceMap",
+		"--inlineSourceMap",
+		"--removeComments",
+		"--noEmitOnError",
+		"--outDir", d1,
+		"main.ts",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		pt("build error: %v\n", err)
+		pt("%s\n", out)
+		return
+	}
+
+	// istanbul coverage
+	d2 := "static"
+	if out, err := exec.Command(
+		"nyc", "instrument",
+		d1, d2,
+	).CombinedOutput(); err != nil {
+		pt("%v\n", err)
+		pt("%s\n", out)
+		return
+	}
+
+	pt("done in %v\n", time.Since(t0))
+
+	waits.Lock()
+	for _, c := range waits.waits {
+		close(c)
+	}
+	waits.waits = waits.waits[0:0]
+	waits.Unlock()
+
+}
+
+type Dir struct {
+	dir http.Dir
+}
+
+func (d Dir) Open(filename string) (http.File, error) {
+	if filename != "/" {
+		ext := path.Ext(filename)
+		if ext == "" {
+			filename = filename + ".js"
+		}
+	}
+	return d.dir.Open(filename)
+}
+
+var waits struct {
+	sync.Mutex
+	waits []chan bool
+}
+
+type API struct{}
+
+func (a *API) Wait() {
+	c := make(chan bool)
+	waits.Lock()
+	waits.waits = append(waits.waits, c)
+	waits.Unlock()
+	<-c
+}
+
+func (a *API) Init() (
+	ret struct {
+		ash.Return
+		Now string
+	},
+) {
+	ret.Now = time.Now().Format("2006-01-02 15:04:05.000")
+	return
+}
+
+func (a *API) Coverage(
+	arg struct {
+		ash.Argument
+		J string
+	},
+) {
+
+	pt("%s coverage report\n", time.Now().Format("15:04:05"))
+
+	cmd := exec.Command(
+		"remap-istanbul",
+		"-o", filepath.Join("..", ".nyc_output", "cover.json"),
+	)
+	cmd.Dir = "build"
+	cmd.Stdin = strings.NewReader(arg.J)
+	out, err := cmd.CombinedOutput()
+	if err != nil || bytes.Contains(out, []byte("Error")) {
+		pt("%s\n", out)
+		pt("%v\n", err)
+		return
+	}
+
+	cmd = exec.Command(
+		"nyc", "report",
+	)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		pt("%v\n", err)
+	}
+
+}
+
+func main() {
+	mux := http.NewServeMux()
+
+	mux.Handle("/", http.FileServer(Dir{http.Dir("static")}))
+	mux.Handle("/api/", http.StripPrefix("/api/", ash.NewHelper(new(API))))
+
+	pt("open localhost:23456 in browser to run tests\n")
+
+	if err := http.ListenAndServe(":23456", mux); err != nil {
+		panic(err)
+	}
+}
