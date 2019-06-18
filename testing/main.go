@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,12 +14,18 @@ import (
 	"sync"
 	"time"
 
-	"github.com/reusee/ash"
+	"github.com/reusee/e/v2"
 	"github.com/rjeczalik/notify"
 )
 
 var (
-	pt = fmt.Printf
+	pt     = fmt.Printf
+	me     = e.Default.WithStack().WithName("afftesting")
+	ce, he = e.New(me)
+)
+
+type (
+	M = map[string]interface{}
 )
 
 func init() {
@@ -175,9 +182,7 @@ var waits struct {
 	waits []chan bool
 }
 
-type API struct{}
-
-func (a *API) Wait() {
+func handleWait(w http.ResponseWriter, req *http.Request) {
 	c := make(chan bool)
 	waits.Lock()
 	waits.waits = append(waits.waits, c)
@@ -185,23 +190,13 @@ func (a *API) Wait() {
 	<-c
 }
 
-func (a *API) Init() (
-	ret struct {
-		ash.Return
-		Now string
-	},
-) {
-	ret.Now = time.Now().Format("2006-01-02 15:04:05.000")
-	return
+func handleInit(w http.ResponseWriter, req *http.Request) {
+	ce(json.NewEncoder(w).Encode(M{
+		"Now": time.Now().Format("2006-01-02 15:04:05.000"),
+	}))
 }
 
-func (a *API) Coverage(
-	arg struct {
-		ash.Argument
-		J string
-	},
-) {
-
+func handleCoverage(w http.ResponseWriter, req *http.Request) {
 	pt("%s coverage report\n", time.Now().Format("15:04:05"))
 
 	cmd := exec.Command(
@@ -209,7 +204,7 @@ func (a *API) Coverage(
 		"-o", filepath.Join("..", ".nyc_output", "cover.json"),
 	)
 	cmd.Dir = "build"
-	cmd.Stdin = strings.NewReader(arg.J)
+	cmd.Stdin = req.Body
 	out, err := cmd.CombinedOutput()
 	if err != nil || bytes.Contains(out, []byte("Error")) {
 		pt("%s\n", out)
@@ -232,7 +227,10 @@ func main() {
 	mux := http.NewServeMux()
 
 	mux.Handle("/", http.FileServer(Dir{http.Dir("static")}))
-	mux.Handle("/api/", http.StripPrefix("/api/", ash.NewHelper(new(API))))
+
+	mux.HandleFunc("/wait", handleWait)
+	mux.HandleFunc("/init", handleInit)
+	mux.HandleFunc("/coverage", handleCoverage)
 
 	pt("open localhost:23456 in browser to run tests\n")
 

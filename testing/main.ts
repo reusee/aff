@@ -1,5 +1,5 @@
 // auto reload
-fetch('/api/Wait').then(() => {
+fetch('/wait').then(() => {
   window.location.reload()
 })
 
@@ -7,7 +7,7 @@ fetch('/api/Wait').then(() => {
 import { App, h } from './aff/index'
 let app;
 
-fetch('/api/Init').then((resp) => {
+fetch('/init').then((resp) => {
   return resp.json()
 }).then((j) => {
   app = new App(
@@ -27,7 +27,7 @@ fetch('/api/Init').then((resp) => {
     document.getElementById('app'),
 
     // state
-    j.Ret,
+    j,
 
   )
 })
@@ -37,11 +37,9 @@ import './test_proxy'
 import './test_utils'
 
 setTimeout(() => {
-  fetch('/api/Coverage', {
+  fetch('/coverage', {
     method: 'post',
-    body: JSON.stringify({
-      J: JSON.stringify((<any>window).__coverage__),
-    }),
+    body: JSON.stringify((<any>window).__coverage__),
   })
 }, 0)
 
