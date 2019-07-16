@@ -41,5 +41,6 @@ setTimeout(() => {
     method: 'post',
     body: JSON.stringify((<any>window).__coverage__),
   })
+  console.log('finish')
 }, 0)
 
