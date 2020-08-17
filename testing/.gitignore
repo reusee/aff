@@ -1,3 +1,4 @@
 /.nyc_output
 /build
-/static
+/static/*.js
+/static/aff
